@@ -8,7 +8,7 @@ import zipfile
 import glob
 import random
 
-# Cấu hình cơ bản
+# Cấu hình Token và Proxy
 TOKEN = os.getenv('BOT_TOKEN')
 PROXY_URL = os.getenv('PROXY_URL', 'http://ZalMQa:BRQrEd@14.250.212.38:36428')
 
@@ -18,74 +18,59 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN)
 
 # ==========================================
-# CƠ CHẾ QUẢN LÝ POOL COOKIES TỪ FILE ZIP
+# CƠ CHẾ POOL COOKIES
 # ==========================================
 COOKIE_DIR = './cookies_extracted'
 COOKIE_ZIP = 'cookies.zip'
 
 def init_cookie_pool():
-    """Giải nén file zip và trả về danh sách các file cookie"""
     if os.path.exists(COOKIE_ZIP):
-        print("📦 Tìm thấy cookies.zip, đang giải nén để tạo Pool Cookie...")
         try:
             with zipfile.ZipFile(COOKIE_ZIP, 'r') as zip_ref:
                 zip_ref.extractall(COOKIE_DIR)
-        except Exception as e:
-            print(f"Lỗi giải nén cookies.zip: {e}")
+        except: pass
             
-    # Lấy tất cả các file .txt trong thư mục giải nén
     if os.path.exists(COOKIE_DIR):
-        cookies = glob.glob(f"{COOKIE_DIR}/*.txt")
-        print(f"✅ Đã nạp {len(cookies)} file cookie vào hệ thống.")
-        return cookies
-    # Tương thích ngược nếu chỉ có 1 file cookies.txt rời ở ngoài
+        return glob.glob(f"{COOKIE_DIR}/*.txt")
     elif os.path.exists('cookies.txt'):
         return ['cookies.txt']
-    
     return []
 
-# Khởi tạo danh sách cookie ngay khi chạy code
 COOKIE_FILES = init_cookie_pool()
 
 def get_ydl_opts(cookie_path=None):
-    """Tùy chọn yt-dlp tích hợp Cookie động"""
     opts = {
-        'format': 'best',
+        'format': 'best', # Vẫn lấy video chất lượng tốt nhất
         'quiet': True,
         'noplaylist': False,
         'extract_flat': 'in_playlist',
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept-Language': 'en-US,en;q=0.9,vi;q=0.8',
         },
         'proxy': PROXY_URL,
-        'extractor_args': {
-            'youtube': ['client=android', 'client=ios']
-        }
+        'extractor_args': {'youtube': ['client=android', 'client=ios']}
     }
-    
-    # Gắn đường dẫn file cookie live được chỉ định vào options
     if cookie_path and os.path.exists(cookie_path):
         opts['cookiefile'] = cookie_path
-        
     return opts
 
 def custom_web_scraper(url):
-    """Xử lý TikTok không logo và quét M3U8 cho web phim"""
+    """Bóc tách luồng tùy chỉnh, hỗ trợ trả về cả MP3 nếu có"""
+    # Xử lý TikTok: Bóc cả Video không logo và Nhạc nền MP3
     if 'tiktok.com' in url:
         try:
-            api_url = f"https://www.tikwm.com/api/?url={url}"
-            res = requests.get(api_url, timeout=10).json()
+            res = requests.get(f"https://www.tikwm.com/api/?url={url}", timeout=10).json()
             if res.get('code') == 0:
-                return res['data']['play']
-        except Exception as e:
-            print(f"Lỗi API TikTok: {e}")
-            return None 
+                return {
+                    'type': 'tiktok',
+                    'video_url': res['data'].get('play'),
+                    'audio_url': res['data'].get('music') # Link MP3 gốc
+                }
+        except: return None 
 
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    }
+    # Quét luồng HLS/M3U8 cho web phim (Thường không tách riêng MP3)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     proxies = {'http': PROXY_URL, 'https': PROXY_URL} if PROXY_URL else None
 
     try:
@@ -93,15 +78,18 @@ def custom_web_scraper(url):
         if res.status_code == 200:
             m3u8_match = re.search(r'(https?://[^\s"\'<>]+?\.m3u8[^\s"\']*)', res.text)
             if m3u8_match:
-                return m3u8_match.group(1).replace('\\/', '/')
-    except Exception as e:
-        print(f"Lỗi Crawler M3U8: {e}")
+                return {
+                    'type': 'm3u8',
+                    'video_url': m3u8_match.group(1).replace('\\/', '/'),
+                    'audio_url': None
+                }
+    except: return None 
         
     return None 
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, f"👋 **Bot tải video đa nền tảng đang chạy.**\n📦 Đang có sẵn: `{len(COOKIE_FILES)}` cookie dự phòng.\n\nGửi link cho tôi để tải!", parse_mode='Markdown')
+    bot.reply_to(message, "👋 **Bot tải Video & MP3 đa nền tảng đang chạy.**\n\nGửi link cho tôi để tải!", parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
 def handle_message(message):
@@ -112,27 +100,23 @@ def handle_message(message):
 
     msg = bot.reply_to(message, "⏳ Đang kết nối mạng và trích xuất dữ liệu...")
 
-    custom_direct_link = custom_web_scraper(url)
-    if custom_direct_link:
-        if '.m3u8' in custom_direct_link:
-            text_response = f"🎬 **Đã tìm thấy luồng trực tiếp (M3U8)**\n\n📥 [Bấm vào đây để tải/xem]({custom_direct_link})\n\n`#EXTM3U`\n`#EXTINF:-1, Luồng Video`\n`{custom_direct_link}`"
-        else:
-            text_response = f"🎬 **Video trực tiếp (Không Logo)**\n\n📥 [Bấm vào đây để tải/xem]({custom_direct_link})"
+    # 1. THỬ TRÍCH XUẤT QUA CUSTOM SCRAPER (TikTok / Phim)
+    custom_data = custom_web_scraper(url)
+    if custom_data:
+        if custom_data['type'] == 'm3u8':
+            text_response = f"🎬 **Luồng trực tiếp (M3U8)**\n\n📥 [Bấm vào đây để tải/xem]({custom_data['video_url']})\n\n`#EXTM3U`\n`#EXTINF:-1, Luồng Video`\n`{custom_data['video_url']}`"
+        else: # TikTok
+            text_response = f"🎬 **Video (Không Logo)**\n📥 [Tải Video]({custom_data['video_url']})\n\n"
+            if custom_data.get('audio_url'):
+                text_response += f"🎧 **Nhạc Nền (MP3)**\n📥 [Tải Nhạc]({custom_data['audio_url']})"
             
         bot.edit_message_text(chat_id=message.chat.id, message_id=msg.message_id, text=text_response, parse_mode='Markdown', disable_web_page_preview=True)
         return
 
-    # ==========================================
-    # CƠ CHẾ AUTO THỬ NGHIỆM COOKIE (FAILOVER)
-    # ==========================================
-    
-    # Xáo trộn danh sách cookie để tránh dùng 1 file quá nhiều lần
+    # 2. XỬ LÝ ĐA NỀN TẢNG QUA YT-DLP (YouTube, Facebook, Insta...)
     pool = list(COOKIE_FILES)
     random.shuffle(pool)
-    
-    # Nếu không có cookie nào, vẫn cho phép chạy 1 lần không dùng cookie
-    if not pool:
-        pool = [None]
+    if not pool: pool = [None]
         
     info = None
     success = False
@@ -143,20 +127,14 @@ def handle_message(message):
             with yt_dlp.YoutubeDL(get_ydl_opts(cookie_path)) as ydl:
                 info = ydl.extract_info(url, download=False)
                 success = True
-                break # Lấy link thành công, thoát khỏi vòng lặp tìm cookie
-                
+                break
         except Exception as e:
             last_error = str(e).split('\n')[0][:150]
-            # Kiểm tra xem lỗi có phải do YouTube block bot hoặc chết cookie không
             if "Sign in" in last_error or "bot" in last_error.lower() or "cookie" in last_error.lower():
-                print(f"⚠️ Cookie {cookie_path} đã chết hoặc bị block. Đang đổi sang cookie khác...")
-                continue # Bỏ qua cookie hiện tại, lặp sang cookie tiếp theo
+                continue
             else:
-                # Nếu lỗi khác (VD: sai link, video bị xóa), thì không cần thử cookie khác làm gì
                 break
                 
-    # ==========================================
-
     if not success:
         error_display = last_error or "❌ Tất cả Cookie đều đã chết hoặc không tìm thấy video hợp lệ."
         try:
@@ -165,7 +143,7 @@ def handle_message(message):
             bot.send_message(message.chat.id, f"❌ Trích xuất thất bại.\n\n*Log:* `{error_display}`", parse_mode='Markdown')
         return
 
-    # Tiến hành xả link nếu thành công
+    # Tiến hành xuất Link Video và Link MP3
     try:
         entries = info.get('entries') if 'entries' in info else [info]
         bot.delete_message(chat_id=message.chat.id, message_id=msg.message_id)
@@ -175,25 +153,35 @@ def handle_message(message):
         
         for entry in entries:
             if not entry: continue
-            
             if extracted_count >= MAX_VIDEOS:
-                bot.send_message(message.chat.id, f"⚠️ **Cảnh báo Spam:** Đã chạm ngưỡng {MAX_VIDEOS} video. Vui lòng gửi link lẻ để tải thêm.", parse_mode='Markdown')
+                bot.send_message(message.chat.id, f"⚠️ Đã chạm ngưỡng {MAX_VIDEOS} media. Gửi link lẻ để tải thêm.", parse_mode='Markdown')
                 break
                 
+            title = entry.get('title', 'Media không tên')
             video_url = entry.get('url')
-            title = entry.get('title', 'Video không tên')
             
+            # --- THUẬT TOÁN TÌM LINK AUDIO ONLY ---
+            audio_url = None
+            if 'formats' in entry:
+                # Quét và lọc ra các format chỉ có tiếng, không có hình (vcodec == 'none')
+                audio_formats = [f for f in entry['formats'] if f.get('vcodec') == 'none' and f.get('acodec') != 'none']
+                if audio_formats:
+                    # Lấy định dạng có chất lượng cao nhất (thường nằm ở cuối mảng của yt-dlp)
+                    audio_url = audio_formats[-1].get('url')
+            # --------------------------------------
+
             if video_url:
-                bot.send_message(
-                    chat_id=message.chat.id, 
-                    text=f"🎬 **{title}**\n\n📥 [Bấm vào đây để tải/xem]({video_url})", 
-                    parse_mode='Markdown'
-                )
+                response = f"🎬 **{title}**\n\n📥 [Tải Video]({video_url})"
+                # Nếu bóc tách được riêng file Audio, gắn thêm link Tải Nhạc
+                if audio_url:
+                    response += f"\n🎧 [Tải Nhạc (Audio)]({audio_url})"
+                
+                bot.send_message(chat_id=message.chat.id, text=response, parse_mode='Markdown')
                 extracted_count += 1
                 time.sleep(1.5) 
                 
         if extracted_count == 0:
-            bot.send_message(message.chat.id, "❌ Không tìm thấy URL tải xuống từ trang web này.")
+            bot.send_message(message.chat.id, "❌ Không tìm thấy dữ liệu tải xuống.")
             
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Lỗi xuất dữ liệu: `{str(e)[:150]}`", parse_mode='Markdown')
