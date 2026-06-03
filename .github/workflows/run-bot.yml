@@ -4,9 +4,15 @@ on:
   push:
     branches:
       - main
+  # Tự động chạy lại mỗi 5 tiếng rưỡi để tránh giới hạn timeout 6 tiếng của GitHub Actions
   schedule:
     - cron: "30 */5 * * *"
-  workflow_dispatch:
+  workflow_dispatch: # Cho phép bấm nút kích hoạt thủ công
+
+# Cơ chế kiểm soát luồng: Chặn bot chạy đè lên nhau gây lỗi 409
+concurrency:
+  group: telegram-bot-polling
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -27,6 +33,7 @@ jobs:
 
       - name: Run Telegram Bot
         env:
+          # Các biến môi trường lấy từ GitHub Secrets
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
         run: python main.py
