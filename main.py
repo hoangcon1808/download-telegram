@@ -18,7 +18,7 @@ PROXY_URL = os.getenv('PROXY_URL', 'http://ZalMQa:BRQrEd@14.250.212.38:36428')
 
 # ID Telegram của bạn để nhận thông báo hàng giờ. 
 # Nếu chạy trên GitHub, hãy thêm biến ADMIN_ID vào phần Secrets.
-ADMIN_ID = os.getenv('ADMIN_ID', 'ĐIỀN_ID_CỦA_BẠN_VÀO_ĐÂY') 
+ADMIN_ID = os.getenv('ADMIN_ID', '634249693') 
 
 if not TOKEN:
     raise Exception("Lỗi: BOT_TOKEN chưa được thiết lập!")
